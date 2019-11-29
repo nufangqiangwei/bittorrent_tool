@@ -4,27 +4,30 @@ Kademlia协议原理简介
 http://www.yeolar.com/note/2010/03/21/kademlia
 https://shuwoom.com/?p=813
 """
+import base64
+import hashlib
 import logging
 import os
+from bencoder import bdecode, bencode
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from socket import inet_ntoa
-from struct import unpack
+from socket import inet_ntoa, inet_aton
+from struct import unpack, pack
 
 # 日志等级
 from urllib3.util import parse_url
 
-from BT_struct import FunctionTable
+from BT_struct import Node, FunctionTable
 from seting import PER_NID_LEN, NEIGHBOR_END, PER_NODE_LEN, PER_NID_NIP_LEN
 
 LOG_LEVEL = logging.INFO
 
 
-def get_rand_id():
+def get_rand_id(lens=PER_NID_LEN):
 	"""
 	生成随机的节点 id，长度为 20 位
 	"""
-	return os.urandom(PER_NID_LEN)
+	return os.urandom(lens)
 
 
 def get_neighbor(target):
@@ -69,6 +72,58 @@ def get_logger(logger_name):
 	return logger
 
 
+def nodemessage_change_string(nodes: list or Node) -> bytes:
+	"""
+	将传入的node中的node_id node_ip node_port 信息转换成bytes
+	:param nodes: [Node,Node]
+	:return:
+	"""
+	return_bytes = bytes
+	if isinstance(nodes, list):
+		for node in nodes:
+			return_bytes += node.nodeid
+			return_bytes += inet_aton(node.ip)
+			return_bytes += pack("!H", node.port)
+	elif isinstance(nodes, Node):
+		return_bytes += nodes.nodeid
+		return_bytes += inet_aton(nodes.ip)
+		return_bytes += pack("!H", nodes.port)
+	return return_bytes
+
+
+def bt_to_hase(file_path):
+	"""
+	种子转磁链
+	:param file_path: 种子地址
+	"""
+	with open(file_path, 'rb') as f:
+		torrent = f.read()
+	# 使用b编码去解码这个种子当中的信息
+	metadata = bdecode(torrent)
+	# 获取种子中的info信息并转换成字符串
+	hashcontents = bencode(metadata[b'info'])
+	# 使用sha1计算这个字符串的哈希值
+	digest = hashlib.sha1(hashcontents).digest()
+	# 将哈希值使用b16编码成40位并字母小写变成字符串
+	b16Hash = base64.b16encode(digest)
+	b16Hash = b16Hash.lower()
+	b16Hash = str(b16Hash, "utf-8")
+	return 'magnet:?xt=urn:btih:' + b16Hash
+
+
+def btih_to_sha1(btih: str):
+	"""
+	磁链转 info_hash
+	"""
+	sha1_data = base64.b32decode(btih.upper())
+	return sha1_data
+
+
+def get_url_pargs(url: str):
+	scheme, auth, host, port, path, query, fragment = parse_url(url)
+	return scheme, auth, host, port, path, query, fragment
+
+
 def thread_pool(q: Queue, pool: ThreadPoolExecutor, func_table: FunctionTable):
 	"""
 	在这里进行异步对收到的消息的处理
@@ -78,17 +133,12 @@ def thread_pool(q: Queue, pool: ThreadPoolExecutor, func_table: FunctionTable):
 	:return:
 	"""
 	while True:
-		data = q.get()
+		data, addres = q.get()
 		if data.get(b"y") == b"r":  # 回复
-			func_table.udp_message_response(data)
+			pool.submit(func_table.udp_message_response, (data, addres))
 		elif data.get(b"y") == b"q":  # 请求
-			func_table.udp_message_query(data)
+			pool.submit(func_table.udp_message_query, (data, addres))
 		elif data.get(b"y") == b"e":  # 错误
-			func_table.udp_message_error(data)
+			pool.submit(func_table.udp_message_error, (data, addres))
 		else:
 			pass
-
-
-def get_url_pargs(url: str):
-	scheme, auth, host, port, path, query, fragment = parse_url(url)
-	return scheme, auth, host, port, path, query, fragment

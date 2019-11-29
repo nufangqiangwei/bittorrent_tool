@@ -47,18 +47,15 @@ class FunctionTable:
 		待定
 	"""
 
-	def __init__(self):
-		self.request = dict()
-
-	def udp_message_query(self, message: dict):
+	def udp_message_query(self, message: dict, addres: tuple):
 		"""别人向我的查询数据包"""
 		pass
 
-	def udp_message_response(self, message: dict):
+	def udp_message_response(self, message: dict, addres: tuple):
 		"""我向别人查询的数据包的回复"""
 		pass
 
-	def udp_message_error(self, message: dict):
+	def udp_message_error(self, message: dict, addres: tuple):
 		"""我向别人的查询别人发生的错误"""
 		pass
 
@@ -66,3 +63,12 @@ class FunctionTable:
 class MyError(Exception):
 	def __init__(self, strmessage):
 		print(strmessage)
+
+
+class HashNode:
+	def __init__(self):
+		self.left = None
+		self.right = None
+		self.data = None
+
+

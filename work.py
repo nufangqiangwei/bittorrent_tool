@@ -1,31 +1,33 @@
 import time
 from queue import Queue
 
-from BT_struct import FunctionTable
-from class_moders import KademliaCall, RoutingTable
+from BT_struct import FunctionTable, MyError
+from class_models import KademliaCall, RoutingTable, BtHashTable
 from seting import SERVER_PORT, TRACKER_SREVER
 from utils import get_rand_id, get_nodes_info
 
 
 class MyCallBackFunc(FunctionTable):
-	def __init__(self, time_out_q: Queue, routingtable: RoutingTable):
-		super(FunctionTable, self).__init__()
-		self.ping_timeout_q = time_out_q
+	def __init__(self, routingtable: RoutingTable, bthashtable: BtHashTable):
 		self.routingtable = routingtable
+		self.bthashtable = bthashtable
 		self.mynodeid = self.routingtable.mynodeid
-		self.response_dict = dict(
-			ping=self.ping_response,
-			get_peers=self.get_peers_response,
-			find_node=self.find_node_response,
-		)
-		self.request_dict = dict(
-			ping=self.ping_request,
-			get_peers=self.get_peers_request,
-			find_node=self.find_node_request,
-		)
+		self.response_dict = {
+			b'ping': self.ping_response,
+			b'get_peers': self.get_peers_response,
+			b'find_node': self.find_node_response,
+		}
+		self.request_dict = {
+			b'ping': self.ping_request,
+			b'get_peers': self.get_peers_request,
+			b'find_node': self.find_node_request,
+		}
 
-	def udp_message_response(self, message: dict):
+	def udp_message_response(self, message: dict, addres: tuple):
 		self.response_dict.get(message.get(b'q'))(message)
+
+	def udp_message_query(self, message: dict, addres: tuple):
+		self.request_dict.get(message.get(b'q'))(message, addres)
 
 	def ping_response(self, data):
 		"""ping这个请求需要一个超时机制，如果时间到了还没有收到请求就认为该节点超时
@@ -40,7 +42,7 @@ class MyCallBackFunc(FunctionTable):
 				node.is_ping = False
 
 	def find_node_response(self, data):
-		for node in get_nodes_info(data["r"]["nodes"]):
+		for node in get_nodes_info(data[b"r"][b"nodes"]):
 			self.routingtable.append_node(node)
 
 	def get_peers_response(self, data):
@@ -51,23 +53,27 @@ class MyCallBackFunc(FunctionTable):
 		self.routingtable.kademliacall.ping(self.mynodeid, addres, t)
 
 	def get_peers_request(self, data, addres):
-		pass
+		t = data[b't']
+		try:
+			info_data = self.bthashtable.get(data[b'a'][b'info_hash'])
+		except MyError:
+			info_data = self.routingtable.get_node(data[b'a'][b'id'])
+
+		self.routingtable.kademliacall.get_peers(addres, '', t, info_data)
 
 	def find_node_request(self, data, addres):
-		node_id = data['a']['target']
-		self.routingtable.get_node(node_id)
+		t = data[b't']
+		node_id = data[b'a'][b'target']
+		nodes = self.routingtable.get_node(node_id)
+		self.routingtable.kademliacall.find_node(self.mynodeid, addres, t, nodes)
 
 
-def init():
-	this_node_id = get_rand_id()
-	q = Queue()
-	communicate = KademliaCall(this_node_id, SERVER_PORT, q)
-	table = RoutingTable(this_node_id, communicate)
-
-	return q, communicate
-
-
-q, communicate = init()
+this_node_id = get_rand_id()
+q = Queue()
+communicate = KademliaCall(this_node_id, SERVER_PORT, q)
+table = RoutingTable(this_node_id, communicate)
+bthashtable = BtHashTable()
+MyCallBackFunc(table, bthashtable)
 for tracker in TRACKER_SREVER:
 	communicate.find_node(node_id=get_rand_id(), addres=tracker)
 a = 0

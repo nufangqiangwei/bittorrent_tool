@@ -4,9 +4,9 @@ import time
 from queue import Queue
 from threading import Thread
 
-from BT_struct import Node, BucKets
+from BT_struct import Node, BucKets, MyError, HashNode
 from seting import UDP_RECV_BUFFSIZE, SLEEP_TIME, SERVER_HOST
-from utils import get_logger, get_rand_id
+from utils import get_logger, get_rand_id, nodemessage_change_string
 
 """
 Thread = 0
@@ -37,9 +37,14 @@ class UdpServer:
 		Thread(target=self.recv_response, args=(q,)).start()  # 初始化接收数据线程
 
 	def send_message(self, message: dict, address: tuple, t=None) -> str:
+		"""
+		:param message:数据包
+		:param address: udp地址（ip,port）
+		:param t: 当是回复别人消息的时候需要将别人发来的t值回复过去，主动发送的时候不需要
+		:return:
+		"""
 		if t is None:
-			message['t'] = self.get_t()
-			print(message,address)
+			message['t'] = self.get_t(2)
 			self.udp.sendto(bencoder.bencode(message), address)
 			return message['t']
 		message['t'] = t
@@ -47,13 +52,13 @@ class UdpServer:
 		return message['t']
 
 	@staticmethod
-	def get_t() -> str:
+	def get_t(lens) -> str:
 		"""
 		生成一个唯一的t值，用来标记对应的函数
 		这里需要搞个线程共享的东西去保存
 		:return:
 		"""
-		return get_rand_id()
+		return get_rand_id(lens)
 
 	def recv_response(self, q: Queue):
 		"""
@@ -64,49 +69,21 @@ class UdpServer:
 				# 接受返回报文
 				data, address = self.udp.recvfrom(UDP_RECV_BUFFSIZE)
 				# 使用 bdecode 解码返回数据
-				print(data)
+				print(address)
 				msg = self.decode_message(data)
 				# 处理返回信息
-				q.put(msg)
+				q.put((msg, address))
 				time.sleep(SLEEP_TIME)
 			except Exception as e:
 				self.logger.warning("接收数据错误 " + " - " + str(e))
 
-	def decode_message(self, data):
+	@staticmethod
+	def decode_message(data):
+		"""
+		因为后期会添加http的请求所有会有不一样的编码方式
+		"""
 		data = bencoder.bdecode(data)
-		# bencoder.decode_dict()
-		return self.is_type(data)
-
-	def is_type(self, obj):
-		"""这里这样解码了之后后面的获取node数据可能会出错"""
-		if isinstance(obj, dict):
-			return self.dict_obj(obj)
-
-		elif isinstance(obj, list):
-			return self.list_obj(obj)
-
-		elif isinstance(obj, bytes):
-			return self.bytes_obj(obj)
-		elif isinstance(obj, int):
-			return int
-		else:
-			print(type(obj))
-			return obj
-
-	def dict_obj(self, obj: dict) -> dict:
-		a = {}
-		for k, v in obj.items():
-			a[self.is_type(k)] = self.is_type(v)
-		return a
-
-	def list_obj(self, obj: list) -> list:
-		a = []
-		for i in obj:
-			a.append(self.is_type(i))
-		return a
-
-	def bytes_obj(self, obj: bytes) -> str:
-		return bencoder.bdecode(obj)
+		return data
 
 	def __del__(self):
 		self.udp.close()
@@ -134,7 +111,6 @@ class KademliaCall:
 		self.mynodeid = mynodeid
 		self.udpserver = UdpServer(SERVER_HOST, server_port, q)
 
-
 	def ping(self, node_id: str, addres: tuple, t=None) -> str:
 		"""
 		{"t":"aa", "y":"q","q":"ping", "a":{"id":"abcdefghij0123456789"}}
@@ -149,18 +125,25 @@ class KademliaCall:
 			return self.udpserver.send_message(message, addres)
 
 		message = {"t": "aa", "y": "r", "r": {"id": node_id}}
-		self.udpserver.send_message(message, addres, t)
+		return self.udpserver.send_message(message, addres, t)
 
-	def find_node(self, node_id: str, addres: tuple) -> str:
+	def find_node(self, node_id: str, addres: tuple, t=None, nodes=None) -> str:
 		"""
 		因为在最开始初始化的时候可能会像tracker发送find_node请求所以添加了个addres选项
 		{"t":"aa", "y":"q","q":"find_node", "a":{"id":"abcdefghij0123456789","target":"mnopqrstuvwxyz123456"}}
 		:return:
 		"""
-		message = {"y": "q", "q": "find_node", "a": {"id": self.mynodeid, 'target': node_id}}
-		return self.udpserver.send_message(message, addres)
+		if t is None:
+			message = {"y": "q", "q": "find_node", "a": {"id": self.mynodeid, 'target': node_id}}
+			return self.udpserver.send_message(message, addres)
 
-	def get_peers(self, addres: tuple, info_hash: str) -> str:
+		if nodes is None:
+			raise MyError('缺少node数据')
+		nodes_bytes = nodemessage_change_string(nodes)
+		message = {"y": "r", "r": {'id': node_id, 'nodes': nodes_bytes}}
+		return self.udpserver.send_message(message, addres, t)
+
+	def get_peers(self, addres: tuple, info_hash: str, t=None, nodes=None) -> str:
 		"""
 		Getpeers与torrent文件的info_hash有关。这时KPRC协议中的”q”=”get_peers”。get_peers请求包含2个参数。
 		第一个参数是id，包含了请求node的nodeID。
@@ -181,8 +164,52 @@ class KademliaCall:
 	{"t":"aa", "y":"r", "r":{"id":"abcdefghij0123456789", "token":"aoeusnth","nodes": "def456..."}}
 		:return:
 		"""
-		message = {"y": "q", "q": "get_peers", "a": {"id": self.mynodeid, "info_hash": info_hash}}
-		return self.udpserver.send_message(message, addres)
+		if t is None:
+			message = {"y": "q", "q": "get_peers", "a": {"id": self.mynodeid, "info_hash": info_hash}}
+			return self.udpserver.send_message(message, addres)
+
+		if nodes is None:
+			raise MyError('缺少node数据')
+		elif isinstance(nodes, list):
+			message = {"y": "r",
+					   "r": {"id": self.mynodeid, "token": self.udpserver.get_t(5),
+							 "values": [nodemessage_change_string(x) for x in nodes]}}
+		elif isinstance(nodes, Node):
+			message = {"y": "r",
+					   "r": {"id": self.mynodeid, "token": self.udpserver.get_t(5),
+							 "nodes": nodemessage_change_string(nodes)}}
+		else:
+			raise MyError('node参数类型错误')
+		return self.udpserver.send_message(message, addres, t)
+
+	def announce_peer(self, addres: tuple, node_id: str, t=None, info_hash=None, token=None, implied_port=None,
+					  port=None) -> str:
+		"""
+{“ t”：“ aa”，“ y”：“ q”，“ q”：“ announce_peer”，“ a”：{“ id”：“ abcdefghij0123456789”，
+“ implied_port”：1，“ info_hash” ：“ mnopqrstuvwxyz123456”，“port”：6881，“token”：“ aoeusnth”}}
+
+There is an optional argument called implied_port which value is either 0 or 1. If it is present and non-zero,
+the port argument should be ignored and the source port of the UDP packet should be used as the peer's port instead.
+This is useful for peers behind a NAT that may not know their external port, and supporting uTP,
+they accept incoming connections on the same port as the DHT port.
+		"""
+		if t is None:
+			message = {"y": "r", "r": {"id": node_id}}
+			return self.udpserver.send_message(message, addres)
+		if info_hash is None or token is None:
+			raise MyError('缺少参数 info_hash or token')
+
+		message = {'t': t, 'y': 'q', 'q': 'announce_peer', 'a': {
+			'id': node_id, 'info_hash': info_hash, 'token': token
+		}}
+		if implied_port is None and port is not None:
+			message['a']['port'] = port
+		elif implied_port is not None:
+			message['a']['implied_port'] = implied_port
+		else:
+			raise MyError('缺少参数 implied_port or port')
+
+		return self.udpserver.send_message(message, addres, t)
 
 
 class RoutingTable:
@@ -236,17 +263,6 @@ class RoutingTable:
 			return
 		self.ping_node(old_node)
 		return
-
-	# if not self.kademliacall.ping(old_node.nodeid, (old_node.ip, old_node.port)):
-	# 	# ping操作超时，删除该节点将新节点加入
-	# 	buckets.nodes.append(node)
-	# 	buckets.node_id_set.add(node.nodeid)
-	# 	buckets.node_id_set.remove(old_node.nodeid)
-	# 	buckets.last_update_time = time.time()
-	# 	return
-	#
-	# buckets.nodes.append(old_node)
-	# buckets.last_update_time = time.time()
 
 	def get_node(self, node_id: str) -> list or Node:
 		"""
@@ -330,34 +346,85 @@ class RoutingTable:
 		node.ping_time = int(time.time())
 
 
-class DiscoverTimeoutObject:
-	"""
-	定义十一个列表，每次最新的数据都存在zero列表当中
-	每秒将所有的列表交换一次 0->1->2->3->4->5->6->7->8->9 10数据过期删除
-	这样zero当中都是最新的数据
-	这个线程只做移动数据的操作不进行其他操作，防止出现长时间运行之后时间对不上
-	"""
+class BtHashTable:
+	def __init__(self):
+		# 固定一个20位的字符串，这个表将以这个字符串位基准去建立一个hash表
+		self.__inithash = b'\x19\xf7T\xeb\x82\xd4\xb8\xaa\xfc\xa0\xd3CY6\xd4\x96I\xa1#t'
+		self.__root_node = HashNode()
+		self.__count = 0
 
-	def __init__(self, q: Queue):
-		self.q = q
-		self.node_addres = dict()
-		self.timelistzero = list()
-		self.timelistone = list()
-		self.timelisttwo = list()
-		self.timelistthree = list()
-		self.timelistfour = list()
-		self.timelistfive = list()
-		self.timelistsix = list()
-		self.timelistseven = list()
-		self.timelistdight = list()
-		self.timelistnine = list()
-		self.timelistten = list()
+	def __cipher_node_path(self, node_id):
+		k = ''
+		for mynode, targetnode in zip(self.__inithash, node_id):
+			k += bin(mynode ^ targetnode)[2:]
+		# c = bin(mynode ^ targetnode)[2:]
+		# c = '0' * (8 - len(c)) + c
+		# k += c
+		return k
 
-	def run(self):
-		while True:
-			method, data = self.q.get()
-			if method == 'put':
-				pass
-			else:
-				pass
-			"""检测是否到检查时间"""
+	def __get_next_node(self, k, node: HashNode, model: str) -> HashNode:
+		if k == '':
+			return node
+
+		if k[0] == '1':
+			if node.right is None:
+				if model == 'add':
+					node.right = HashNode()
+				else:
+					raise StopIteration
+			return self.__get_next_node(k[1:], node.right, model)
+		else:
+			if node.left is None:
+				if model == 'add':
+					node.left = HashNode()
+				else:
+					raise StopIteration
+			return self.__get_next_node(k[1:], node.left, model)
+
+	def add(self, node_id, node_data):
+		if len(node_id) != 20:
+			raise MyError('node_id的长度不正确，正确的长度应该为20位')
+		k = self.__cipher_node_path(node_id)
+		node = self.__get_next_node(k, self.__root_node, 'add')
+		if node.data is not None:
+			raise MyError('该数据已存在，请使用revise方法修改')
+		node.data = node_data
+		self.__count += 1
+
+	def get(self, node_id):
+		if len(node_id) != 20:
+			raise MyError('node_id的长度不正确，正确的长度应该为20位')
+		k = self.__cipher_node_path(node_id)
+		try:
+			node = self.__get_next_node(k, self.__root_node, 'get')
+		except StopIteration:
+			return MyError('没有该数据')
+
+		return node.data
+
+	def delete(self, node_id):
+		if len(node_id) != 20:
+			raise MyError('node_id的长度不正确，正确的长度应该为20位')
+		k = self.__cipher_node_path(node_id)
+		try:
+			node = self.__get_next_node(k, self.__root_node, 'delete')
+		except StopIteration:
+			return MyError('没有该数据')
+		del node
+		self.__count -= 1
+		return True
+
+	def revise(self, node_id, data):
+		if len(node_id) != 20:
+			raise MyError('node_id的长度不正确，正确的长度应该为20位')
+		k = self.__cipher_node_path(node_id)
+		try:
+			node = self.__get_next_node(k, self.__root_node, 'revise')
+		except StopIteration:
+			raise MyError('没有该数据，请使用add方法添加该数据')
+
+		node.data = data
+		return True
+
+	def count(self):
+		return self.__count
