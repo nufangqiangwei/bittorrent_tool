@@ -13,12 +13,13 @@ class Node:
 		self.nodeid = nodeid
 		self.ip = ip
 		self.port = port
-		self.last_activity_time = now_time  # Timestamp
+		self.last_activity_time = now_time  # 最后活跃时间
 		self.is_ping = False  # 是否之前对这个节点发送ping消息
 		self.ping_time = now_time  # Timestamp 发送ping消息的时间
 
 
 class BucKets:
+
 	"""
 	因为对每个节点的ping是异步实现的，所有需要我去额外的维护一个字典 self.new_node 就是待加入的列表，
 	如果那个节点超时就将新的节点加入到最新的nodes中
@@ -32,6 +33,15 @@ class BucKets:
 		self.node_id_set = set()
 		self.last_update_time = None  # Timestamp
 		self.new_node = dict()
+		self.lock = False  # 增删node锁
+
+
+class Task:
+	def __init__(self, message, key, callback, args):
+		self.message = message
+		self.key = key
+		self.callback = callback
+		self.args = args
 
 
 class FunctionTable:
@@ -70,5 +80,3 @@ class HashNode:
 		self.left = None
 		self.right = None
 		self.data = None
-
-

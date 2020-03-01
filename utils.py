@@ -17,7 +17,7 @@ from struct import unpack, pack
 # 日志等级
 from urllib3.util import parse_url
 
-from BT_struct import Node, FunctionTable
+from BT_struct import Node, FunctionTable, MyError
 from seting import PER_NID_LEN, NEIGHBOR_END, PER_NODE_LEN, PER_NID_NIP_LEN
 
 LOG_LEVEL = logging.INFO
@@ -142,3 +142,13 @@ def thread_pool(q: Queue, pool: ThreadPoolExecutor, func_table: FunctionTable):
 			pool.submit(func_table.udp_message_error, (data, addres))
 		else:
 			pass
+
+
+def check_node_id(func):
+	def check(*args, **kwargs):
+		node_id = args[0]
+		if len(node_id) != 20:
+			raise MyError('node_id的长度不正确，正确的长度应该为20位')
+		return func(*args, **kwargs)
+
+	return check

@@ -4,9 +4,9 @@ import time
 from queue import Queue
 from threading import Thread
 
-from BT_struct import Node, BucKets, MyError, HashNode
+from BT_struct import Node, BucKets, MyError, HashNode, Task
 from seting import UDP_RECV_BUFFSIZE, SLEEP_TIME, SERVER_HOST
-from utils import get_logger, get_rand_id, nodemessage_change_string
+from utils import get_logger, get_rand_id, nodemessage_change_string, check_node_id
 
 """
 Thread = 0
@@ -69,7 +69,7 @@ class UdpServer:
 				# 接受返回报文
 				data, address = self.udp.recvfrom(UDP_RECV_BUFFSIZE)
 				# 使用 bdecode 解码返回数据
-				print(address)
+				# print(address)
 				msg = self.decode_message(data)
 				# 处理返回信息
 				q.put((msg, address))
@@ -105,7 +105,7 @@ class UdpHttpServer:
 
 class KademliaCall:
 	"""http://www.bittorrent.org/beps/bep_0005.html
-	t这个字段放到最终发送端去添加，因为多处生成这个字段无法保证它是在以发送出去的数据包当中是不重复的"""
+	t这个字段放到最终发送端去添加，因为多处生成这个字段无法保证它在以发送出去的数据包当中是不重复的"""
 
 	def __init__(self, mynodeid, server_port, q: Queue):
 		self.mynodeid = mynodeid
@@ -162,7 +162,6 @@ class KademliaCall:
 	{"t":"aa", "y":"q","q":"get_peers", "a":{"id":"abcdefghij0123456789","info_hash":"mnopqrstuvwxyz123456"}}
 	{"t":"aa", "y":"r", "r":{"id":"abcdefghij0123456789", "token":"aoeusnth","values": ["axje.u", "idhtnm"]}}
 	{"t":"aa", "y":"r", "r":{"id":"abcdefghij0123456789", "token":"aoeusnth","nodes": "def456..."}}
-		:return:
 		"""
 		if t is None:
 			message = {"y": "q", "q": "get_peers", "a": {"id": self.mynodeid, "info_hash": info_hash}}
@@ -239,11 +238,11 @@ class RoutingTable:
 		buckets = self.cipher_nodeid(node.nodeid)
 
 		if node.nodeid in buckets.node_id_set:
-			self.append_node(buckets, node, is_add=False)
+			self.buckets_add_node(buckets, node, is_add=False)
 			return
 
 		if buckets.nodes_munber < 8:
-			self.append_node(buckets, node)
+			self.buckets_add_node(buckets, node)
 			return
 
 		old_node = None
@@ -253,7 +252,7 @@ class RoutingTable:
 			if bucket_node.is_ping and (now_time - bucket_node.ping_time > 10):
 				# 该节点已经超时了
 				self.remove_node(buckets, bucket_node)
-				self.append_node(buckets, node)
+				self.buckets_add_node(buckets, node)
 				return
 			if not bucket_node.is_ping and old_node is None:
 				# 当这个这个节点没有发送ping请求而且old_node还没有第一个还没有发送ping请求的节点
@@ -292,7 +291,7 @@ class RoutingTable:
 
 	def cipher_nodeid(self, node_id) -> BucKets:
 		"""
-		计算目标node应该存在哪一个K桶当中，返回K桶的编号
+		计算目标node应该存在哪一个K桶当中，返回该K桶对象
 		:param node_id:
 		"""
 		mun = 20
@@ -323,7 +322,7 @@ class RoutingTable:
 		buckets.nodes_munber -= 1
 
 	@staticmethod
-	def append_node(buckets: BucKets, node: Node, is_add=True):
+	def buckets_add_node(buckets: BucKets, node: Node, is_add=True):
 		"""
 		向K桶添加一个新的node
 		:param buckets:K桶对象
@@ -347,6 +346,10 @@ class RoutingTable:
 
 
 class BtHashTable:
+	"""
+	已存有的种子表
+	"""
+
 	def __init__(self):
 		# 固定一个20位的字符串，这个表将以这个字符串位基准去建立一个hash表
 		self.__inithash = b'\x19\xf7T\xeb\x82\xd4\xb8\xaa\xfc\xa0\xd3CY6\xd4\x96I\xa1#t'
@@ -354,36 +357,35 @@ class BtHashTable:
 		self.__count = 0
 
 	def __cipher_node_path(self, node_id):
-		k = ''
 		for mynode, targetnode in zip(self.__inithash, node_id):
-			k += bin(mynode ^ targetnode)[2:]
-		# c = bin(mynode ^ targetnode)[2:]
-		# c = '0' * (8 - len(c)) + c
-		# k += c
-		return k
+			for i in bin(mynode ^ targetnode)[2:]:
+				yield i
 
 	def __get_next_node(self, k, node: HashNode, model: str) -> HashNode:
-		if k == '':
+		"""递归调用循环查找目标节点的数据"""
+		try:
+			path = next(k)
+		except StopIteration:
 			return node
 
-		if k[0] == '1':
-			if node.right is None:
-				if model == 'add':
-					node.right = HashNode()
-				else:
-					raise StopIteration
-			return self.__get_next_node(k[1:], node.right, model)
-		else:
-			if node.left is None:
-				if model == 'add':
-					node.left = HashNode()
-				else:
-					raise StopIteration
-			return self.__get_next_node(k[1:], node.left, model)
+		if path == '1':
+			if node.right is None and model == 'add':  # 只有添加的时候才会出现该条路径不存在情况，其余的直接报错
+				node.right = HashNode()
+			else:
+				raise StopIteration
+			return self.__get_next_node(k, node.right, model)
 
+		elif path == '0':
+			if node.left is None and model == 'add':
+				node.left = HashNode()
+			else:
+				raise StopIteration
+			return self.__get_next_node(k, node.left, model)
+		else:
+			raise TypeError('参数k的值只能是0或1组成的字符串')
+
+	@check_node_id
 	def add(self, node_id, node_data):
-		if len(node_id) != 20:
-			raise MyError('node_id的长度不正确，正确的长度应该为20位')
 		k = self.__cipher_node_path(node_id)
 		node = self.__get_next_node(k, self.__root_node, 'add')
 		if node.data is not None:
@@ -391,9 +393,8 @@ class BtHashTable:
 		node.data = node_data
 		self.__count += 1
 
+	@check_node_id
 	def get(self, node_id):
-		if len(node_id) != 20:
-			raise MyError('node_id的长度不正确，正确的长度应该为20位')
 		k = self.__cipher_node_path(node_id)
 		try:
 			node = self.__get_next_node(k, self.__root_node, 'get')
@@ -402,9 +403,8 @@ class BtHashTable:
 
 		return node.data
 
+	@check_node_id
 	def delete(self, node_id):
-		if len(node_id) != 20:
-			raise MyError('node_id的长度不正确，正确的长度应该为20位')
 		k = self.__cipher_node_path(node_id)
 		try:
 			node = self.__get_next_node(k, self.__root_node, 'delete')
@@ -414,9 +414,8 @@ class BtHashTable:
 		self.__count -= 1
 		return True
 
+	@check_node_id
 	def revise(self, node_id, data):
-		if len(node_id) != 20:
-			raise MyError('node_id的长度不正确，正确的长度应该为20位')
 		k = self.__cipher_node_path(node_id)
 		try:
 			node = self.__get_next_node(k, self.__root_node, 'revise')
@@ -428,3 +427,126 @@ class BtHashTable:
 
 	def count(self):
 		return self.__count
+
+
+class TimingWhell:
+	def __init__(self):
+		self.__Roulette = [set() for i in range(30)]  # 创建轮盘列表，当中存储的结构是集合
+		self.__pointer = 0  # 轮盘指针
+		self.__time_out_set = set()  # 超时任务集合
+		# 所有的任务字典，key为添加任务时候返回值，value为元组：零号下标为轮盘列表的下标，一号下标为任务对象
+		self.__key_task = dict()
+		self.__pointer_lock = False  # 指针锁
+		self.__add_list = []
+		self.__pop_list = []
+		self.__timeout_dict = {}
+		self.__pop_dict = {}
+
+	def run(self):
+		"""启动轮盘"""
+		a = Thread(target=TimingWhell.__move_pointer, args=(self,))
+		b = Thread(target=TimingWhell.__worken, args=(self,))
+		c = Thread(target=TimingWhell.__control_roulette, args=(self,))
+		a.daemon = True
+		b.daemon = True
+		c.daemon = True
+		a.start()
+		b.start()
+		c.start()
+
+	def add(self, task_message, callback, args=()):
+		key = get_rand_id()
+		task = Task(task_message, key, callback, args)
+		self.__add_list.append(task)
+		return key
+
+	def pop(self, task_key):
+		self.__pop_list.append(task_key)
+		# print('删除key{}'.format(task_key))
+		while True:
+			time.sleep(0.001)
+			value = self.__pop_dict.get(task_key)
+			if value is not None:
+				del self.__pop_dict[task_key]
+				return value
+
+	def get_all_task(self):
+		return self.__key_task
+
+	def __add_task(self, task: Task):
+		while True:
+			if self.__pointer_lock:
+				continue
+			cursor = self.__pointer
+			self.__Roulette[cursor - 1].add(task)
+			self.__key_task[task.key] = cursor - 1, task
+			return
+
+	def __pop(self, task_key):
+		if task_key is None:
+			raise TypeError('缺少task_key参数')
+		# print('删除key是{}的任务'.format(task_key))
+		value = self.__key_task.get(task_key)
+		if value is None:
+			self.__pop_dict[task_key] = False
+			return
+		subscript, task = value
+		set_tasks = self.__Roulette[subscript]
+		if task in set_tasks:
+			set_tasks.remove(task)  # 这里可能会与操作指针线程出现线程不安全
+			del self.__key_task[task.key]
+			self.__pop_dict[task_key] = True
+			return
+
+		self.__pop_dict[task_key] = False
+
+	def __move_pointer(self):
+		while True:
+			time.sleep(1)
+			self.__pointer_lock = True
+
+			if self.__pointer == 29:
+				self.__pointer = 0
+			else:
+				self.__pointer += 1
+
+			if self.__Roulette[self.__pointer]:
+				self.__time_out_set.update(self.__Roulette[self.__pointer])
+				self.__Roulette[self.__pointer].clear()
+
+			self.__pointer_lock = False
+
+	def __worken(self):
+		while True:
+			for index in range(len(self.__time_out_set)):
+				task = self.__time_out_set.pop()
+				del self.__key_task[task.key]
+				task.callback(*task.args)
+
+	def __control_roulette(self):
+		"""
+		对任务队列的操作总共有
+		现在的问题集中在超时删除这里，我该怎么在什么地方处理在查询字典当中删除已超时的任务
+		增：添加任务到队列当中
+			增加操作有，
+			查询当前指针位置，确定该任务添加到什么位置
+			添加到任务队列当中，
+			添加到查询字典当中，字典当中包含该任务在任务队列当中的哪一个集合当中和该任务对象
+
+		超时删除：该集合中所有任务超时时候需要将该集合中的所有任务移除
+			超时删除操作有，
+			将该集合当中的所有对象复制到超时任务集合当中并清空该集合
+			将所有超时任务在查询字典当中删除
+
+		查询删除：当有查询的时候就将查询到的任务删除
+			查询删除操作有，
+			查询是否在查询字典当中，不再就返回false
+			查询是否在任务集合当中，不再就返回false
+			在就在该集合和查询字典当中删除该任务并返回true
+		"""
+		while True:
+			if self.__add_list:
+				self.__add_task(self.__add_list.pop(0))
+			if self.__pop_list:
+				# print('准备删除key')
+				self.__pop(self.__pop_list.pop(0))
