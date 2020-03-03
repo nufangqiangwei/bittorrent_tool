@@ -95,15 +95,10 @@
     找有该资源的节点，省去在网络中查询的时间。
     磁链从网络中获取到的种子也只有种子info信息，就是种子当中的文件列表信息，其他的信息都是没有的
     而且与TRACKER服务器通信和DHT网络中通信是不同的
-    TRACKER 服务器只支持thhp/https协议通信，所以你看见的TRACKER地址中协议名是http/https 但是你还会看见一个叫UDP的，
-    你猜猜他是怎么通信的。。。。。。。。
-    。。。。。。。。。。。。。。。。。。
-    想不到把，他还是通过http协议通信，但是他不是走的TCP，而且走的是UDP 
+    TRACKER 服务器只支持thhp/https协议通信，所以你看见的TRACKER地址中协议名是http/https 
+    但是你还会看见一个叫UTP的，
+   [UTP](http://www.bittorrent.org/beps/bep_0029.html)详细介绍在这里
     
-![cmd-markdown-logo](http://img.youai123.com/1507615921-5474.gif)
-    
-    这是我查了半天才知道的，就是你得自己实现http协议的文本内容然后使用UDP去发送这个文本内容，
-    然后我嫌麻烦这个还没写(╯‵□′)╯︵┻━┻
     
 ## 使用介绍
     我这个使用的时候需要你 先创建这个类KademliaCall对象它需要从参数有node_id、启动端口，一个队列对象
