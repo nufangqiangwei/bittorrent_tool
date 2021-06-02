@@ -8,7 +8,8 @@ import base64
 import hashlib
 import logging
 import os
-from bencoder import bdecode, bencode
+# from bencoder import bdecode, bencode
+import bencoder
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from socket import inet_ntoa, inet_aton
@@ -99,16 +100,16 @@ def bt_to_hase(file_path):
 	with open(file_path, 'rb') as f:
 		torrent = f.read()
 	# 使用b编码去解码这个种子当中的信息
-	metadata = bdecode(torrent)
+	metadata = bencoder.decode(torrent)
 	# 获取种子中的info信息并转换成字符串
-	hashcontents = bencode(metadata[b'info'])
+	hashcontents = bencoder.encode(metadata[b'info'])
 	# 使用sha1计算这个字符串的哈希值
 	digest = hashlib.sha1(hashcontents).digest()
 	# 将哈希值使用b16编码成40位并字母小写变成字符串
 	b16Hash = base64.b16encode(digest)
 	b16Hash = b16Hash.lower()
-	b16Hash = str(b16Hash, "utf-8")
-	return 'magnet:?xt=urn:btih:' + b16Hash
+	# b16Hash = str(b16Hash, "utf-8")
+	return 'magnet:?xt=urn:btih:' + b16Hash.decode()
 
 
 def btih_to_sha1(btih: str):

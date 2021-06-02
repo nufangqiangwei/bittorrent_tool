@@ -19,7 +19,7 @@ ping_time_out = 15
 # K 桶超时时间 /second
 K_time_out = 300
 # 内置的tracker服务器
-TRACKER_SREVER = [("router.bittorrent.com", 6881),
+TRACKER_SERVER = [("router.bittorrent.com", 6881),
 				  ("dht.transmissionbt.com", 6881),
 				  ("router.utorrent.com", 6881)]
 """

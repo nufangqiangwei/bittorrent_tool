@@ -44,12 +44,12 @@ class UdpServer:
 		:return:
 		"""
 		if t is None:
-			message['t'] = self.get_t(2)
-			self.udp.sendto(bencoder.bencode(message), address)
-			return message['t']
-		message['t'] = t
-		self.udp.sendto(bencoder.bencode(message), address)
-		return message['t']
+			message[b't'] = self.get_t(2)
+			self.udp.sendto(bencoder.encode(message), address)
+			return message[b't']
+		message[b't'] = t
+		self.udp.sendto(bencoder.encode(message), address)
+		return message[b't']
 
 	@staticmethod
 	def get_t(lens) -> str:
@@ -82,7 +82,7 @@ class UdpServer:
 		"""
 		因为后期会添加http的请求所有会有不一样的编码方式
 		"""
-		data = bencoder.bdecode(data)
+		data = bencoder.decode(data)
 		return data
 
 	def __del__(self):
@@ -121,10 +121,10 @@ class KademliaCall:
 		:t 当回复消息的时候需要传递t值回复对方，但是自己主动发送消息的时候不需要传入所以该值应当为None
 		"""
 		if t is None:
-			message = {"y": "q", "q": "ping", "a": {"id": node_id}}
+			message = {b"y": "q", b"q": b"ping", b"a": {"id": node_id}}
 			return self.udpserver.send_message(message, addres)
 
-		message = {"t": "aa", "y": "r", "r": {"id": node_id}}
+		message = {b"t": "aa", b"y": "r", b"r": {b"id": node_id}}
 		return self.udpserver.send_message(message, addres, t)
 
 	def find_node(self, node_id: str, addres: tuple, t=None, nodes=None) -> str:
@@ -134,13 +134,13 @@ class KademliaCall:
 		:return:
 		"""
 		if t is None:
-			message = {"y": "q", "q": "find_node", "a": {"id": self.mynodeid, 'target': node_id}}
+			message = {b"y": "q", b"q": "find_node", b"a": {b"id": self.mynodeid, b'target': node_id}}
 			return self.udpserver.send_message(message, addres)
 
 		if nodes is None:
 			raise MyError('缺少node数据')
 		nodes_bytes = nodemessage_change_string(nodes)
-		message = {"y": "r", "r": {'id': node_id, 'nodes': nodes_bytes}}
+		message = {b"y": "r", b"r": {b'id': node_id, b'nodes': nodes_bytes}}
 		return self.udpserver.send_message(message, addres, t)
 
 	def get_peers(self, addres: tuple, info_hash: str, t=None, nodes=None) -> str:
@@ -164,19 +164,19 @@ class KademliaCall:
 	{"t":"aa", "y":"r", "r":{"id":"abcdefghij0123456789", "token":"aoeusnth","nodes": "def456..."}}
 		"""
 		if t is None:
-			message = {"y": "q", "q": "get_peers", "a": {"id": self.mynodeid, "info_hash": info_hash}}
+			message = {b"y": "q", b"q": "get_peers", b"a": {b"id": self.mynodeid, b"info_hash": info_hash}}
 			return self.udpserver.send_message(message, addres)
 
 		if nodes is None:
 			raise MyError('缺少node数据')
 		elif isinstance(nodes, list):
-			message = {"y": "r",
-					   "r": {"id": self.mynodeid, "token": self.udpserver.get_t(5),
-							 "values": [nodemessage_change_string(x) for x in nodes]}}
+			message = {b"y": "r",
+					   b"r": {b"id": self.mynodeid, b"token": self.udpserver.get_t(5),
+							 b"values": [nodemessage_change_string(x) for x in nodes]}}
 		elif isinstance(nodes, Node):
-			message = {"y": "r",
-					   "r": {"id": self.mynodeid, "token": self.udpserver.get_t(5),
-							 "nodes": nodemessage_change_string(nodes)}}
+			message = {b"y": "r",
+					   b"r": {b"id": self.mynodeid, b"token": self.udpserver.get_t(5),
+							 b"nodes": nodemessage_change_string(nodes)}}
 		else:
 			raise MyError('node参数类型错误')
 		return self.udpserver.send_message(message, addres, t)
@@ -193,18 +193,18 @@ This is useful for peers behind a NAT that may not know their external port, and
 they accept incoming connections on the same port as the DHT port.
 		"""
 		if t is None:
-			message = {"y": "r", "r": {"id": node_id}}
+			message = {b"y": "r", b"r": {b"id": node_id}}
 			return self.udpserver.send_message(message, addres)
 		if info_hash is None or token is None:
 			raise MyError('缺少参数 info_hash or token')
 
-		message = {'t': t, 'y': 'q', 'q': 'announce_peer', 'a': {
-			'id': node_id, 'info_hash': info_hash, 'token': token
+		message = {b't': t, b'y': 'q', b'q': 'announce_peer', b'a': {
+			b'id': node_id, b'info_hash': info_hash, b'token': token
 		}}
 		if implied_port is None and port is not None:
-			message['a']['port'] = port
+			message[b'a'][b'port'] = port
 		elif implied_port is not None:
-			message['a']['implied_port'] = implied_port
+			message[b'a'][b'implied_port'] = implied_port
 		else:
 			raise MyError('缺少参数 implied_port or port')
 
